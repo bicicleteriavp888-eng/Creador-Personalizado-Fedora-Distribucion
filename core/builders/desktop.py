@@ -11,6 +11,9 @@ La clase no modifica ``kiosk.ks`` ni los métodos de Cage, Sway, LightDM o
 from __future__ import annotations
 
 import os
+import shutil
+
+from core.software.local_rpm import inspect_local_rpms
 
 from core.builder import KioskISOBuilder
 from core.constants import DEFAULT_MIRRORLIST
@@ -27,6 +30,14 @@ class DesktopISOBuilder(KioskISOBuilder):
         config.setdefault("iso_name", "Fedora-Desktop")
         super().__init__(config)
 
+        # Los RPM locales se inspeccionan antes de generar la receta. El mismo
+        # verificador se comparte con Kiosco, pero la integración Desktop solo
+        # instala paquetes del sistema: no crea launchers ni servicios Kiosco.
+        self.local_rpm_metadata = inspect_local_rpms(
+            self.config.get("local_rpm_paths", []),
+            allow_unsigned=bool(self.config.get("allow_unsigned_rpms", False)),
+        )
+        self.config["local_rpm_packages"] = [item["name"] for item in self.local_rpm_metadata]
         # El generador valida el entorno al construirse. Así un entorno
         # desconocido se rechaza antes de llegar a livecd-creator.
         self.desktop_generator = DesktopKickstartGenerator(self.config)
@@ -54,8 +65,26 @@ class DesktopISOBuilder(KioskISOBuilder):
     # -- Validación y receta -------------------------------------------------
 
     def _uses_local_rpm(self):
-        """El motor Desktop no copia aplicaciones locales del kiosco."""
-        return False
+        """Desktop usa RPM locales como paquetes del sistema, nunca launchers."""
+        return bool(self.config.get("local_rpm_paths"))
+
+    def _prepare_local_rpm_repository(self):
+        if not self.local_rpm_metadata:
+            return
+        repo_dir = os.path.join(self.work_dir, "desktop-local-rpms")
+        shutil.rmtree(repo_dir, ignore_errors=True)
+        os.makedirs(repo_dir, exist_ok=True)
+        for item in self.local_rpm_metadata:
+            shutil.copy2(item["path"], os.path.join(repo_dir, os.path.basename(item["path"])))
+        self._must(
+            self._run(["createrepo_c", "--quiet", repo_dir]),
+            "crear el repositorio de RPM locales de Fedora Desktop",
+        )
+        self.desktop_generator.config["local_rpm_repo"] = repo_dir
+        self.log_signal.emit(
+            "📦 Repositorio Desktop preparado: "
+            + ", ".join(f"{item['name']} {item['version']}-{item['release']} ({item['arch']})" for item in self.local_rpm_metadata)
+        )
 
     def validate_configuration(self):
         """Valida la configuración Desktop antes de iniciar la compilación."""
@@ -68,6 +97,7 @@ class DesktopISOBuilder(KioskISOBuilder):
         super()._preflight()
 
     def _generate_kickstart(self, password_hash):
+        self._prepare_local_rpm_repository()
         self.log_signal.emit(
             "📝 Generando Kickstart Fedora Desktop "
             f"({self.desktop_generator.environment['name']})..."

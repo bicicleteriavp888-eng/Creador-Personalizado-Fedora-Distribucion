@@ -2,7 +2,8 @@
 
 from gui.layouts import add_page
 from gui.status import service_states
-from PySide6.QtWidgets import QCheckBox, QGroupBox, QLabel, QVBoxLayout, QWidget
+from gui.ui_components import SettingRowCard, ToggleSwitch
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 HELP = """
 <p><b>Seguridad y servicios</b></p>
@@ -24,60 +25,78 @@ class SecurityTabMixin:
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        group_net = QGroupBox("Protección de red y acceso remoto")
-        net_layout = QVBoxLayout(group_net)
-        self.check_firewall = QCheckBox("Habilitar firewall del sistema")
-        self.check_firewall.setChecked(True)
+        # --- Red y acceso remoto ---
+        self.check_firewall = ToggleSwitch(checked=True)
         self.check_firewall.setToolTip(
             "Activa firewalld y permite solo SSH. Recomendado para equipos conectados a la red."
         )
-        self.check_enable_ssh = QCheckBox("Habilitar administración remota por SSH")
-        self.check_enable_ssh.setChecked(False)
+        self.card_firewall = SettingRowCard(
+            "Firewall del sistema",
+            "Activa firewalld y permite solo el tráfico necesario.",
+            "🛡",
+            self.check_firewall,
+        )
+        layout.addWidget(self.card_firewall)
+
+        self.check_enable_ssh = ToggleSwitch(checked=False)
         self.check_enable_ssh.setToolTip(
             "SSH permanece deshabilitado por defecto. Activá esta opción solo si necesitás acceso remoto."
         )
-        self.check_ssh_password = QCheckBox(
-            "Permitir autenticación SSH con contraseña (menos seguro)"
+        self.card_ssh = SettingRowCard(
+            "Administración remota por SSH",
+            "Habilita acceso remoto seguro solo si lo necesitás.",
+            "🔐",
+            self.check_enable_ssh,
         )
-        self.check_ssh_password.setChecked(False)
+        layout.addWidget(self.card_ssh)
+
+        self.check_ssh_password = ToggleSwitch(checked=False)
         self.check_ssh_password.setEnabled(False)
-        self.check_enable_ssh.toggled.connect(self._on_ssh_toggled)
         self.check_ssh_password.setToolTip(
             "Si se desactiva, necesitás una clave pública instalada previamente para acceder por SSH."
         )
-        net_layout.addWidget(self.check_firewall)
-        net_layout.addWidget(self.check_enable_ssh)
-        net_layout.addWidget(self.check_ssh_password)
+        self.check_enable_ssh.toggled.connect(self._on_ssh_toggled)
+        self.card_ssh_password = SettingRowCard(
+            "Autenticación SSH con contraseña",
+            "Menos seguro. Si está desactivado, se requiere clave pública.",
+            "🔑",
+            self.check_ssh_password,
+        )
+        layout.addWidget(self.card_ssh_password)
 
         self.lbl_service_state = QLabel("Consultando servicios del host…")
         self.lbl_service_state.setObjectName("managerStatus")
         self.lbl_service_state.setWordWrap(True)
-        net_layout.addWidget(self.lbl_service_state)
+        layout.addWidget(self.lbl_service_state)
 
-        group_admin = QGroupBox("Privilegios sudo (compartido por ambos motores)")
-        admin_layout = QVBoxLayout(group_admin)
-        self.check_sudo_nopasswd = QCheckBox(
-            "Permitir sudo sin contraseña para wheel (menos seguro)"
-        )
-        self.check_sudo_nopasswd.setChecked(False)
+        # --- Privilegios compartidos ---
+        self.check_sudo_nopasswd = ToggleSwitch(checked=False)
         self.check_sudo_nopasswd.setToolTip(
-            "Por defecto sudo pide la contraseña de kioskuser. Activá esta opción solo si automatizás tareas administrativas."
+            "Por defecto sudo pide contraseña. Activá esta opción solo si automatizás tareas administrativas."
         )
-        admin_layout.addWidget(self.check_sudo_nopasswd)
-        self.group_common_privileges = group_admin
+        self.card_sudo = SettingRowCard(
+            "Sudo sin contraseña para wheel",
+            "Opción avanzada y menos segura para administración local.",
+            "⚡",
+            self.check_sudo_nopasswd,
+        )
+        layout.addWidget(self.card_sudo)
+        self.group_common_privileges = self.card_sudo
 
-        group_kiosk = QGroupBox("Protección del terminal Kiosco")
-        kiosk_layout = QVBoxLayout(group_kiosk)
-        self.check_vt = QCheckBox(
-            "Bloquear consolas virtuales (deshabilita getty en tty2…tty6)"
-        )
-        self.check_vt.setChecked(True)
+        # --- Kiosco ---
+        self.check_vt = ToggleSwitch(checked=True)
         self.check_vt.setToolTip(
             "Opción exclusiva de Kiosco: desactiva getty y el auto-spawn de VTs. "
             "No elimina el cambio de VT a nivel kernel."
         )
-        kiosk_layout.addWidget(self.check_vt)
-        self.group_kiosk_security = group_kiosk
+        self.card_vt = SettingRowCard(
+            "Bloquear consolas virtuales",
+            "Exclusivo Kiosco: deshabilita getty en tty2…tty6.",
+            "🖥",
+            self.check_vt,
+        )
+        layout.addWidget(self.card_vt)
+        self.group_kiosk_security = self.card_vt
 
         note = QLabel(
             "Los estados consultados corresponden al equipo donde corre Creador Personalizado. "
@@ -85,15 +104,12 @@ class SecurityTabMixin:
         )
         note.setObjectName("inlineHint")
         note.setWordWrap(True)
-        layout.addWidget(group_net)
-        layout.addWidget(group_admin)
-        layout.addWidget(group_kiosk)
         layout.addWidget(note)
         layout.addStretch(1)
 
-        self._register_advanced(self.check_ssh_password)
-        self._register_advanced(group_admin)
-        self._register_advanced(group_kiosk)
+        self._register_advanced(self.card_ssh_password)
+        self._register_advanced(self.group_common_privileges)
+        self._register_advanced(self.group_kiosk_security)
         self.refresh_project_mode_fields()
         add_page(
             self, "step5", tab, "Seguridad y servicios",

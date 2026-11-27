@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 from gui.components import PageHeader
 
 
-def add_page(gui, key, page, title, subtitle, help_text, *, step=None, content_width=1180):
+def add_page(gui, key, page, title, subtitle, help_text, *, step=None, content_width=960):
     """Registra una pagina con encabezado fijo y contenido desplazable."""
     page.setObjectName("pageContent")
     page.setMinimumWidth(0)
@@ -24,14 +24,15 @@ def add_page(gui, key, page, title, subtitle, help_text, *, step=None, content_w
 
     layout = page.layout()
     if layout is not None:
-        layout.setContentsMargins(24, 22, 24, 26)
-        layout.setSpacing(18)
+        layout.setContentsMargins(0, 0, 0, 24)
+        layout.setSpacing(14)
         _polish_nested_layouts(layout)
 
     container = QWidget()
+    container.setObjectName("contentArea")
     container_layout = QVBoxLayout(container)
-    container_layout.setContentsMargins(0, 0, 0, 0)
-    container_layout.setSpacing(14)
+    container_layout.setContentsMargins(32, 24, 32, 0)
+    container_layout.setSpacing(12)
     container_layout.addWidget(PageHeader(title, subtitle))
 
     scroll = QScrollArea()

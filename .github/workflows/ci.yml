@@ -1,8 +1,6 @@
 name: CI - Creador Personalizado
 
 on:
-  # En ramas con PR, pull_request ya valida cada actualización. Evitamos
-  # ejecutar el mismo pipeline también por push.
   push:
     branches: [main]
   pull_request:
@@ -17,16 +15,9 @@ on:
 permissions:
   contents: read
 
-# Si llega otro commit mientras se valida el anterior, conservar solo el
-# trabajo más reciente de esa misma rama/PR.
-concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 jobs:
   tests-and-static-audit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
     env:
       QT_QPA_PLATFORM: offscreen
     steps:
@@ -43,14 +34,12 @@ jobs:
           sudo apt-get install -y xorriso grub-common squashfs-tools libegl1 libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0
       - name: Instalar proyecto y pruebas
         run: |
+          python -m pip install --upgrade pip
           python -m pip install -e . pytest
       - name: Compilar sintaxis Python
         run: python -m compileall -q core gui scripts main.py
-      - name: Ejecutar pruebas con diagnóstico de bloqueos
-        # -vv muestra la prueba exacta en curso; faulthandler vuelca las pilas
-        # de todos los hilos si una prueba queda bloqueada durante 3 minutos.
-        # La suite completa se conserva: no se omiten ni se relajan pruebas.
-        run: python -m pytest -vv -ra --durations=20 -o faulthandler_timeout=180 --tb=short
+      - name: Ejecutar pruebas
+        run: pytest -q
       - name: Verificar checksums distribuidos
         run: sha256sum -c SHA256SUMS.txt
 

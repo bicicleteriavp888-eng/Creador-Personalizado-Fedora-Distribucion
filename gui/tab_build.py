@@ -1,13 +1,25 @@
 """Paso 6: compilación, validación, progreso y cancelación."""
 
 import os
+
 from gui.layouts import add_page
+from gui.ui_components import SettingRowCard, ToggleSwitch
 from PySide6.QtCore import QThread, Signal
 from core.cache import cache_info
 from core.iso.quick_audit import audit_iso_quick
 from PySide6.QtWidgets import (
-    QCheckBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox,
-    QProgressBar, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QFileDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
 
 HELP = """
@@ -42,33 +54,58 @@ class BuildTabMixin:
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        group_output = QGroupBox("Destino de la imagen")
-        output_layout = QHBoxLayout(group_output)
+        # --- Destino ---
+        output_control = QWidget()
+        output_row = QHBoxLayout(output_control)
+        output_row.setContentsMargins(0, 0, 0, 0)
+        output_row.setSpacing(8)
         self.txt_output = QLineEdit(os.path.expanduser("~/ISOs"))
         self.txt_output.setPlaceholderText("Carpeta donde se guardará la ISO")
+        self.txt_output.setMinimumWidth(260)
         self.btn_output = QPushButton("Examinar…")
         self.btn_output.clicked.connect(self.select_output_dir)
-        output_layout.addWidget(self.txt_output, 1)
-        output_layout.addWidget(self.btn_output)
+        output_row.addWidget(self.txt_output, 1)
+        output_row.addWidget(self.btn_output)
+        self.card_output = SettingRowCard(
+            "Destino de la imagen",
+            "Carpeta donde se guardará la ISO generada.",
+            "📁",
+            output_control,
+        )
+        layout.addWidget(self.card_output)
 
-        group_summary = QGroupBox("Resumen del proyecto")
-        summary_layout = QVBoxLayout(group_summary)
+        # --- Resumen ---
+        summary_card = QFrame()
+        summary_card.setObjectName("settingRowCard")
+        summary_layout = QVBoxLayout(summary_card)
+        summary_layout.setContentsMargins(16, 14, 16, 14)
+        summary_layout.setSpacing(8)
+        summary_title = QLabel("Resumen del proyecto")
+        summary_title.setObjectName("settingTitle")
+        summary_layout.addWidget(summary_title)
         self.lbl_build_summary = QLabel("Todavía no hay un resumen disponible.")
         self.lbl_build_summary.setObjectName("cardDetail")
         self.lbl_build_summary.setWordWrap(True)
         summary_layout.addWidget(self.lbl_build_summary)
+        layout.addWidget(summary_card)
 
-        group_validation = QGroupBox("Validación previa")
-        validation_layout = QVBoxLayout(group_validation)
-        self.lbl_validation = QLabel(
-            "La configuración todavía no fue validada en esta sesión."
-        )
+        # --- Validación y acciones ---
+        validation_card = QFrame()
+        validation_card.setObjectName("settingRowCard")
+        validation_layout = QVBoxLayout(validation_card)
+        validation_layout.setContentsMargins(16, 14, 16, 14)
+        validation_layout.setSpacing(10)
+        validation_title = QLabel("Validación y compilación")
+        validation_title.setObjectName("settingTitle")
+        validation_layout.addWidget(validation_title)
+        self.lbl_validation = QLabel("La configuración todavía no fue validada en esta sesión.")
         self.lbl_validation.setObjectName("cardDetail")
         self.lbl_validation.setWordWrap(True)
         validation_layout.addWidget(self.lbl_validation)
-        actions = QVBoxLayout()
-        action_navigation = QHBoxLayout()
-        action_build = QHBoxLayout()
+
+        actions = QGridLayout()
+        actions.setHorizontalSpacing(10)
+        actions.setVerticalSpacing(8)
         self.btn_validate = QPushButton("Validar configuración")
         self.btn_validate.setToolTip(
             "Comprueba las etapas, las dependencias del host y el espacio disponible antes de compilar."
@@ -76,40 +113,59 @@ class BuildTabMixin:
         self.btn_validate.clicked.connect(self.validate_configuration)
         self.btn_preview_kickstart = QPushButton("Ver Kickstart generado")
         self.btn_preview_kickstart.clicked.connect(self.preview_kickstart)
-        self.check_qemu_bios = QCheckBox("Probar BIOS Legacy en QEMU al terminar")
-        self.check_qemu_bios.setChecked(False)
-        self.check_qemu_uefi = QCheckBox("Probar UEFI en QEMU al terminar")
-        self.check_qemu_uefi.setChecked(False)
-        self.check_cache_enabled = QCheckBox("Usar caché local persistente (recomendado)")
-        self.check_cache_enabled.setChecked(True)
-        self.check_cache_enabled.setToolTip(
-            "Reutiliza los paquetes/metadatos guardados por livecd-creator. "
-            "La caché se conserva entre compilaciones."
-        )
-        self.btn_cache_info = QPushButton("Estado de la caché")
-        self.btn_cache_info.clicked.connect(self.refresh_cache_info)
-        self.lbl_cache_info = QLabel("Caché persistente: estado sin consultar.")
-        self.lbl_cache_info.setObjectName("inlineHint")
         self.btn_build = QPushButton("Generar imagen ISO")
         self.btn_build.setObjectName("primaryAction")
         self.btn_build.clicked.connect(self.start_build_process)
         self.btn_cancel = QPushButton("Cancelar")
-        self.btn_cancel.setToolTip(
-            "Aborta livecd-creator y limpia el árbol de trabajo para el próximo intento."
-        )
+        self.btn_cancel.setToolTip("Aborta livecd-creator y limpia el árbol de trabajo para el próximo intento.")
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self.cancel_build)
-        # Separar validación y compilación evita que la fila de cuatro
-        # botones fuerce un ancho mínimo mayor que el viewport de la página.
-        action_navigation.addWidget(self.btn_validate)
-        action_navigation.addWidget(self.btn_preview_kickstart)
-        action_build.addWidget(self.btn_build, 1)
-        action_build.addWidget(self.btn_cancel)
-        actions.addLayout(action_navigation)
-        actions.addLayout(action_build)
+        actions.addWidget(self.btn_validate, 0, 0)
+        actions.addWidget(self.btn_preview_kickstart, 0, 1)
+        actions.addWidget(self.btn_build, 1, 0)
+        actions.addWidget(self.btn_cancel, 1, 1)
+        actions.setColumnStretch(0, 1)
+        actions.setColumnStretch(1, 1)
         validation_layout.addLayout(actions)
-        validation_layout.addWidget(self.check_cache_enabled)
-        validation_layout.addWidget(self.btn_cache_info)
+
+        # Toggles de opciones
+        self.check_cache_enabled = ToggleSwitch(checked=True)
+        self.check_cache_enabled.setToolTip(
+            "Reutiliza los paquetes/metadatos guardados por livecd-creator. La caché se conserva entre compilaciones."
+        )
+        self.check_qemu_bios = ToggleSwitch(checked=False)
+        self.check_qemu_uefi = ToggleSwitch(checked=False)
+
+        # Las presentamos como filas compactas dentro de la tarjeta
+        for label, desc, control in (
+            ("Caché local persistente", "Reutiliza paquetes/metadatos para acelerar compilaciones.", self.check_cache_enabled),
+            ("Prueba BIOS Legacy en QEMU", "Ejecuta una prueba de humo BIOS al terminar la compilación.", self.check_qemu_bios),
+            ("Prueba UEFI en QEMU", "Ejecuta una prueba de humo UEFI al terminar la compilación.", self.check_qemu_uefi),
+        ):
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            text_col = QVBoxLayout()
+            text_col.setSpacing(2)
+            t = QLabel(label)
+            t.setObjectName("settingTitle")
+            d = QLabel(desc)
+            d.setObjectName("settingDescription")
+            d.setWordWrap(True)
+            text_col.addWidget(t)
+            text_col.addWidget(d)
+            row.addLayout(text_col, 1)
+            row.addWidget(control, 0)
+            validation_layout.addLayout(row)
+
+        cache_row = QHBoxLayout()
+        self.btn_cache_info = QPushButton("Estado de la caché")
+        self.btn_cache_info.clicked.connect(self.refresh_cache_info)
+        cache_row.addWidget(self.btn_cache_info)
+        cache_row.addStretch(1)
+        validation_layout.addLayout(cache_row)
+        self.lbl_cache_info = QLabel("Caché persistente: estado sin consultar.")
+        self.lbl_cache_info.setObjectName("inlineHint")
+        self.lbl_cache_info.setWordWrap(True)
         validation_layout.addWidget(self.lbl_cache_info)
 
         iso_audit_row = QHBoxLayout()
@@ -122,17 +178,24 @@ class BuildTabMixin:
         self.btn_choose_iso_audit.clicked.connect(self.choose_iso_for_quick_audit)
         iso_audit_row.addWidget(self.btn_quick_iso_audit)
         iso_audit_row.addWidget(self.btn_choose_iso_audit)
+        iso_audit_row.addStretch(1)
         validation_layout.addLayout(iso_audit_row)
         self.lbl_iso_audit = QLabel("Auditoría ISO: todavía no ejecutada.")
         self.lbl_iso_audit.setObjectName("inlineHint")
         self.lbl_iso_audit.setWordWrap(True)
         validation_layout.addWidget(self.lbl_iso_audit)
         self._iso_audit_worker = None
-        validation_layout.addWidget(self.check_qemu_bios)
-        validation_layout.addWidget(self.check_qemu_uefi)
+        layout.addWidget(validation_card)
 
-        group_progress = QGroupBox("Estado de compilación")
-        progress_layout = QVBoxLayout(group_progress)
+        # --- Progreso ---
+        progress_card = QFrame()
+        progress_card.setObjectName("settingRowCard")
+        progress_layout = QVBoxLayout(progress_card)
+        progress_layout.setContentsMargins(16, 14, 16, 14)
+        progress_layout.setSpacing(10)
+        progress_title = QLabel("Estado de compilación")
+        progress_title.setObjectName("settingTitle")
+        progress_layout.addWidget(progress_title)
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         progress_layout.addWidget(self.progress_bar)
@@ -142,18 +205,13 @@ class BuildTabMixin:
         self.txt_logs.setMinimumHeight(180)
         progress_layout.addWidget(QLabel("Registro de livecd-creator:"))
         progress_layout.addWidget(self.txt_logs, 1)
-
-        layout.addWidget(group_output)
-        layout.addWidget(group_summary)
-        layout.addWidget(group_validation)
-        layout.addWidget(group_progress, 1)
+        layout.addWidget(progress_card, 1)
 
         add_page(
             self, "step6", tab, "Compilación y validación",
             "Revisá el proyecto, validá sus requisitos y generá la imagen ISO.",
             HELP, step=6,
         )
-
 
     def quick_audit_last_iso(self):
         """Audita la última ISO generada, sin bloquear la interfaz."""
@@ -257,7 +315,6 @@ class BuildTabMixin:
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.setText("CANCELANDO…")
         self.worker.cancel_event.set()
-
 
     def refresh_cache_info(self):
         """Muestra tamaño y ubicación de la caché persistente."""

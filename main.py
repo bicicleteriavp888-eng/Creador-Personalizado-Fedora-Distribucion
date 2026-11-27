@@ -11,7 +11,7 @@ import time
 import tempfile
 from datetime import datetime
 
-from PySide6.QtCore import QSettings, QThread, Signal, Qt
+from PySide6.QtCore import QPoint, QSettings, QThread, Signal, Qt
 from PySide6.QtWidgets import (
     QDialog,
     QPlainTextEdit,
@@ -48,8 +48,10 @@ from core.desktops.environments import (
     UnknownDesktopEnvironmentError,
     get_desktop_environment,
 )
-from gui.components import EmptyState, FlowLayout, HelpPanel, SectionCard, StatusCard
+from gui.components import EmptyState, FlowLayout, HelpPanel, SectionCard
+from gui.ui_components import StatusMetricCard
 from gui.layouts import add_page
+from gui.icons import nav_icon
 from gui.status import (
     HashWorker,
     HostStatusWorker,
@@ -66,7 +68,7 @@ from gui.tab_security import SecurityTabMixin
 from gui.tab_software import SoftwareTabMixin
 from gui.tab_usb import UsbTabMixin
 from gui.custom_distro import CustomDistroTabMixin
-from gui.theme import build_stylesheet
+from gui.theme_manager import ThemeManager
 from gui.validation import validate_all, validate_step, validate_until
 
 
@@ -200,7 +202,7 @@ class KioskBuilderGUI(
         super().__init__()
         self.setWindowTitle("Creador Personalizado 3.0.0-alpha.8 | Fedora Image Studio")
         self.resize(1320, 900)
-        self.setMinimumSize(1080, 720)
+        self.setMinimumSize(900, 640)
 
         self.custom_app_path = ""
         self.worker = None
@@ -234,18 +236,19 @@ class KioskBuilderGUI(
         self._active_project_name = ""
         self._active_profile_id = ""
         self.ui_mode = "advanced"
-        self.theme_name = "light"
+        self.theme_name = str(self._settings.value("theme", "light") or "light")
+        self.theme_manager = ThemeManager(QApplication.instance(), self.theme_name)
+        self.theme_manager.theme_changed.connect(self._on_theme_manager_changed)
 
         self._build_shell()
         self._init_pages()
         self._build_sidebar()
         self._load_settings()
-        # El tipo de proyecto puede restaurarse desde QSettings o desde el
-        # último proyecto. Reaplicar aquí la visibilidad garantiza que los
-        # controles exclusivos de Kiosco reflejen el perfil ya restaurado.
-        self.refresh_project_mode_fields()
         self._apply_theme(self.theme_name)
         self._apply_ui_mode(self.ui_mode, confirm=False)
+        # La visibilidad de la página Kiosco debe derivarse del perfil ya
+        # restaurado, no del estado provisional previo a cargar preferencias.
+        self.refresh_project_mode_fields()
         self._navigate("dashboard", validate=False)
         self.refresh_dashboard()
 
@@ -259,11 +262,15 @@ class KioskBuilderGUI(
 
         self.sidebar = QFrame()
         self.sidebar.setObjectName("sidebar")
-        self.sidebar.setMinimumWidth(232)
-        self.sidebar.setMaximumWidth(360)
+        self.sidebar.setFixedWidth(260)
         self.sidebar_layout = QVBoxLayout(self.sidebar)
-        self.sidebar_layout.setContentsMargins(16, 20, 16, 16)
-        self.sidebar_layout.setSpacing(5)
+        self.sidebar_layout.setContentsMargins(12, 16, 12, 12)
+        self.sidebar_layout.setSpacing(4)
+        self._nav_pill = QFrame(self.sidebar)
+        self._nav_pill.setObjectName("navActivePill")
+        self._nav_pill.setFixedSize(3, 16)
+        self._nav_pill.hide()
+        self._nav_pill.raise_()
 
         content = QWidget()
         content.setObjectName("contentRoot")
@@ -290,23 +297,21 @@ class KioskBuilderGUI(
         topbar_layout.addWidget(self.lbl_breadcrumb)
         topbar_layout.addStretch(1)
 
-        topbar_layout.addWidget(QLabel("Modo:"))
+        # Los selectores de Modo/Tema se ubican en el pie de la barra lateral
+        # (WinUI 3). Se crean aquí para conservar los atributos existentes.
         self.combo_ui_mode = QComboBox()
-        self.combo_ui_mode.addItem("Simple", "simple")
+        self.combo_ui_mode.addItem("Básico", "simple")
         self.combo_ui_mode.addItem("Avanzado", "advanced")
         self.combo_ui_mode.setToolTip(
-            "Simple muestra solo las opciones esenciales. Avanzado habilita "
-            "multiventana, privilegios, imagenes y parametros tecnicos."
+            "Básico muestra solo las opciones esenciales. Avanzado habilita "
+            "multiventana, privilegios, imágenes y parámetros técnicos."
         )
         self.combo_ui_mode.currentIndexChanged.connect(self._on_mode_changed)
-        topbar_layout.addWidget(self.combo_ui_mode)
 
-        topbar_layout.addWidget(QLabel("Tema:"))
         self.combo_theme = QComboBox()
         self.combo_theme.addItem("Claro", "light")
         self.combo_theme.addItem("Oscuro", "dark")
         self.combo_theme.currentIndexChanged.connect(self._on_theme_changed)
-        topbar_layout.addWidget(self.combo_theme)
 
         self.lbl_global_status = QLabel("Configuracion sin validar")
         self.lbl_global_status.setObjectName("globalStatus")
@@ -383,6 +388,9 @@ class KioskBuilderGUI(
         self.btn_sidebar_toggle.setToolTip(
             "Mostrar la barra lateral." if collapsed else "Ocultar la barra lateral."
         )
+        from PySide6.QtCore import QTimer
+
+        QTimer.singleShot(0, self._reposition_nav_pill)
 
     def _build_sidebar(self):
         brand = QLabel("Creador Personalizado")
@@ -395,8 +403,8 @@ class KioskBuilderGUI(
         subtitle.setWordWrap(True)
         self.sidebar_layout.addWidget(subtitle)
 
-        self.btn_sidebar_new = QPushButton("＋ Nuevo proyecto")
-        self.btn_sidebar_new.setObjectName("primaryAction")
+        self.btn_sidebar_new = QPushButton("+ Nuevo proyecto")
+        self.btn_sidebar_new.setObjectName("sidebarNewProjectButton")
         self.btn_sidebar_new.setToolTip(
             "Crea una configuración nueva y elige la modalidad en el paso 1."
         )
@@ -425,19 +433,91 @@ class KioskBuilderGUI(
         self._add_nav_button("usb", "Unidad USB")
 
         self.sidebar_layout.addStretch(1)
-        footer = QLabel("Fedora 44 · Python + PySide6\nLa interfaz no requiere root.")
+
+        # Ajustes globales (WinUI 3)
+        settings_div = QFrame()
+        settings_div.setObjectName("sidebarDivider")
+        settings_div.setFrameShape(QFrame.Shape.HLine)
+        self.sidebar_layout.addWidget(settings_div)
+
+        mode_row = QHBoxLayout()
+        mode_row.setContentsMargins(8, 0, 8, 0)
+        mode_row.setSpacing(8)
+        mode_label = QLabel("Modo")
+        mode_label.setObjectName("sidebarFooter")
+        mode_row.addWidget(mode_label)
+        self.combo_ui_mode.setMinimumHeight(30)
+        mode_row.addWidget(self.combo_ui_mode, 1)
+        self.sidebar_layout.addLayout(mode_row)
+
+        theme_row = QHBoxLayout()
+        theme_row.setContentsMargins(8, 0, 8, 0)
+        theme_row.setSpacing(8)
+        theme_label = QLabel("Tema")
+        theme_label.setObjectName("sidebarFooter")
+        theme_row.addWidget(theme_label)
+        self.combo_theme.setMinimumHeight(30)
+        theme_row.addWidget(self.combo_theme, 1)
+        self.sidebar_layout.addLayout(theme_row)
+
+        env_div = QFrame()
+        env_div.setObjectName("sidebarDivider")
+        env_div.setFrameShape(QFrame.Shape.HLine)
+        self.sidebar_layout.addWidget(env_div)
+
+        footer = QLabel("Fedora 44 · Python + PySide6")
         footer.setObjectName("sidebarFooter")
         footer.setWordWrap(True)
         self.sidebar_layout.addWidget(footer)
+
+    _NAV_ICON_KEYS = {
+        "dashboard": "home",
+        "step1": "identity",
+        "step2": "appearance",
+        "step3": "software",
+        "step4": "installer",
+        "step5": "security",
+        "step6": "build",
+        "kiosk_config": "kiosk",
+        "custom_distro": "manager",
+        "usb": "usb",
+    }
 
     def _add_nav_button(self, key, label):
         button = QPushButton(label)
         button.setObjectName("navButton")
         button.setCheckable(True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setMinimumHeight(36)
+        icon_name = self._NAV_ICON_KEYS.get(key)
+        if icon_name:
+            button.setIcon(nav_icon(icon_name, active=False, theme=getattr(self, "theme_name", "light")))
+            button.setIconSize(button.iconSize().__class__(16, 16))
         button.clicked.connect(lambda checked=False, k=key: self._on_nav_clicked(k))
         self._nav_buttons[key] = button
         self.sidebar_layout.addWidget(button)
+
+    def _refresh_nav_icons(self):
+        theme = getattr(self, "theme_name", "light")
+        current = getattr(self, "_current_key", "")
+        for key, button in self._nav_buttons.items():
+            icon_name = self._NAV_ICON_KEYS.get(key)
+            if icon_name:
+                button.setIcon(nav_icon(icon_name, active=(key == current), theme=theme))
+                from PySide6.QtCore import QSize
+                button.setIconSize(QSize(16, 16))
+
+    def _reposition_nav_pill(self, key=None):
+        key = self._current_key if key is None else key
+        button = self._nav_buttons.get(key)
+        if button is None or not button.isVisible():
+            self._nav_pill.hide()
+            return
+        pos = button.mapTo(self.sidebar, QPoint(0, 0))
+        y = pos.y() + (button.height() - 16) // 2
+        self._nav_pill.move(4, max(0, y))
+        self._nav_pill.show()
+        self._nav_pill.raise_()
 
     def register_page(self, key, widget, title, subtitle, help_text, step=None):
         self._pages[key] = {
@@ -468,42 +548,42 @@ class KioskBuilderGUI(
 
         grid = QGridLayout()
         grid.setSpacing(14)
-        self.card_last = StatusCard(
+        self.card_last = StatusMetricCard(
             "Ultima compilacion",
             "Sin compilaciones",
             "Todavia no se genero una ISO en este equipo.",
         )
-        self.card_iso = StatusCard(
+        self.card_iso = StatusMetricCard(
             "ISO generada",
             "—",
             "Ruta del archivo generado.",
         )
-        self.card_hash = StatusCard(
+        self.card_hash = StatusMetricCard(
             "SHA-256",
             "—",
             "Se calcula en segundo plano cuando hay una ISO.",
         )
-        self.card_disk = StatusCard(
+        self.card_disk = StatusMetricCard(
             "Espacio disponible",
             "—",
             "Volumen de salida de la ISO.",
         )
-        self.card_deps = StatusCard(
+        self.card_deps = StatusMetricCard(
             "Dependencias",
             "—",
             "Herramientas y activos del host.",
         )
-        self.card_services = StatusCard(
+        self.card_services = StatusMetricCard(
             "Servicios del host",
             "—",
             "firewalld y sshd del equipo de compilacion.",
         )
-        self.card_config = StatusCard(
+        self.card_config = StatusMetricCard(
             "Configuracion activa",
             "—",
             "Resumen del asistente.",
         )
-        self.card_pending = StatusCard(
+        self.card_pending = StatusMetricCard(
             "Tareas pendientes",
             "—",
             "Proximos pasos sugeridos.",
@@ -559,7 +639,7 @@ class KioskBuilderGUI(
         history.add_widget(self.history_empty)
         layout.addWidget(history)
 
-        self.card_errors = StatusCard(
+        self.card_errors = StatusMetricCard(
             "Ultimos errores",
             "Sin errores registrados",
             "Se muestra el ultimo fallo de compilacion.",
@@ -635,6 +715,11 @@ class KioskBuilderGUI(
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_dashboard_columns()
+        self._reposition_nav_pill()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._reposition_nav_pill()
 
     # -- Navegacion del asistente -------------------------------------------
     def _step_number(self, key):
@@ -670,6 +755,8 @@ class KioskBuilderGUI(
 
         for nav_key, button in self._nav_buttons.items():
             button.setChecked(nav_key == key)
+        self._refresh_nav_icons()
+        self._reposition_nav_pill(key)
 
         step = page["step"]
         if key == "dashboard":
@@ -828,9 +915,6 @@ class KioskBuilderGUI(
         self.lbl_global_status.setText(
             "Modo Simple" if mode == "simple" else "Modo Avanzado"
         )
-        # El cambio de modo de interfaz no debe dejar desincronizada la
-        # navegación específica del motor seleccionado (Kiosco/Desktop).
-        self.refresh_project_mode_fields()
 
     def _advanced_features_active(self):
         return any(
@@ -867,9 +951,34 @@ class KioskBuilderGUI(
         if theme not in ("light", "dark"):
             theme = "light"
         self.theme_name = theme
-        self.setStyleSheet(build_stylesheet(theme))
+        manager = getattr(self, "theme_manager", None)
+        if manager is not None:
+            manager.set_theme(theme)
+        else:
+            # Compatibilidad durante la construcción inicial de la ventana.
+            from gui.theme_manager import build_stylesheet
+            QApplication.instance().setStyleSheet(build_stylesheet(theme))
         _set_combo_by_data(self.combo_theme, theme)
         self._settings.setValue("theme", theme)
+        if hasattr(self, "_nav_buttons"):
+            self._refresh_nav_icons()
+        # Refrescar iconos SVG en tarjetas/expanders
+        try:
+            from gui.icons import resolve_icon
+            for lbl in self.findChildren(QLabel):
+                key = lbl.property("iconKey")
+                if key:
+                    size = max(lbl.width(), lbl.height(), 16)
+                    qicon = resolve_icon(str(key), size=size)
+                    if not qicon.isNull():
+                        lbl.setPixmap(qicon.pixmap(size, size))
+        except Exception:
+            pass
+
+    def _on_theme_manager_changed(self, theme):
+        self.theme_name = theme
+        if hasattr(self, "_nav_buttons"):
+            self._refresh_nav_icons()
 
     def _on_theme_changed(self, *args):
         theme = self.combo_theme.currentData()
@@ -966,7 +1075,14 @@ class KioskBuilderGUI(
         if hasattr(self, "group_kiosk_display"):
             self.group_kiosk_display.setVisible(is_kiosk)
         if hasattr(self, "_nav_buttons") and "kiosk_config" in self._nav_buttons:
-            self._nav_buttons["kiosk_config"].setVisible(is_kiosk)
+            kiosk_button = self._nav_buttons["kiosk_config"]
+            kiosk_button.setVisible(True)
+            kiosk_button.setEnabled(is_kiosk)
+            kiosk_button.setToolTip(
+                "Configuración exclusiva del perfil Kiosco."
+                if is_kiosk else
+                "Disponible únicamente cuando el proyecto utiliza el motor Kiosco."
+            )
         if not is_kiosk and self._current_key == "kiosk_config":
             self._navigate("step3", validate=False)
 
@@ -1019,6 +1135,7 @@ class KioskBuilderGUI(
             "output_dir": self.txt_output.text().strip(),
             "selected_packages": sorted(getattr(self, "_custom_pkg_names", set())),
             "selected_groups": sorted(getattr(self, "_custom_groups", set())),
+            "local_rpm_paths": list(getattr(self, "_custom_local_rpm_paths", [])),
             "project_name": self._active_project_name,
             "profile_id": self._active_profile_id,
             "profile_name": (get_named_profile_template(self._active_profile_id).get("name", "") if self._active_profile_id else ""),
@@ -1285,6 +1402,7 @@ class KioskBuilderGUI(
         packages = merge_packages(template.get("packages", []))
         self._custom_pkg_names = set(packages)
         self._custom_groups = set()
+        self._restore_local_rpm_selection([])
         self.txt_extra_packages.setText(" ".join(packages))
         self.txt_extra_groups.clear()
         self.list_fedora_selected.clear()
@@ -1352,6 +1470,7 @@ class KioskBuilderGUI(
                 field.clear()
         self._custom_pkg_names = set(config.get("selected_packages") or [])
         self._custom_groups = set(config.get("selected_groups") or [])
+        self._restore_local_rpm_selection(config.get("local_rpm_paths") or [])
         if not self._custom_pkg_names and config.get("extra_packages"):
             self._custom_pkg_names = set(str(config["extra_packages"]).replace(",", " ").split())
         self._custom_distro_mode = bool(config.get("custom_distro_mode", True))
@@ -1450,6 +1569,7 @@ class KioskBuilderGUI(
                 "Estado: GENERADA · pendiente de validar y probar",
                 badge="GENERADA",
                 state="ok",
+                copyable=True,
             )
             self._update_hash_card(path, size, mtime)
             self.card_pending.set_content(
@@ -1679,9 +1799,10 @@ class KioskBuilderGUI(
         if cached_hash and cache_matches:
             self.card_hash.set_content(
                 cached_hash[:20] + "…",
-                "SHA-256 completo:\n" + cached_hash,
+                cached_hash,
                 badge="SHA-256",
                 state="ok",
+                copyable=True,
             )
             return
 
@@ -1725,9 +1846,10 @@ class KioskBuilderGUI(
         self._settings.setValue("last_iso_mtime", mtime)
         self.card_hash.set_content(
             digest[:20] + "…",
-            "SHA-256 completo:\n" + digest,
+            digest,
             badge="SHA-256",
             state="ok",
+            copyable=True,
         )
 
     def _on_hash_failed(self, path, message):
@@ -1840,6 +1962,7 @@ class KioskBuilderGUI(
             f"{path}\n{_size_gib(stat.st_size):.2f} GiB",
             badge="GENERADA",
             state="ok",
+            copyable=True,
         )
         self._start_hash(path, stat.st_size, int(stat.st_mtime))
         self.refresh_dashboard()
