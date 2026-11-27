@@ -145,6 +145,19 @@ def test_kickstart_selecciona_el_gestor_correcto(environment, manager, service):
         assert forbidden not in kickstart
 
 
+def test_kickstart_incluye_rpm_local_como_paquete_y_repo():
+    generator = DesktopKickstartGenerator(
+        _config(
+            local_rpm_packages=["sample-local-app"],
+            local_rpm_repo="/var/tmp/creador/local-rpms",
+        )
+    )
+    kickstart = generator.render()
+    packages = parse_packages_from_kickstart(kickstart)
+    assert "sample-local-app" in packages
+    assert 'repo --name=creador-local-rpms --baseurl="file:///var/tmp/creador/local-rpms"' in kickstart
+
+
 def test_kickstart_incluye_grupos_extra_seleccionados():
     generator = DesktopKickstartGenerator(
         _config(extra_groups="@office @multimedia")

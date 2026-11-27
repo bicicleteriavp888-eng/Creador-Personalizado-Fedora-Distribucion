@@ -177,6 +177,13 @@ def _validate_desktop_software(config):
 
 def validate_software(config):
     issues = []
+    for rpm_path in config.get("local_rpm_paths") or []:
+        expanded = _expanded(str(rpm_path))
+        if not expanded.lower().endswith(".rpm") or not os.path.isfile(expanded):
+            issues.append(Issue(
+                3, "RPM local no disponible",
+                f"El archivo RPM seleccionado no existe o no es válido: {expanded}",
+            ))
     package_result = validate_package_names(config.get("extra_packages") or "")
     if package_result["invalid"]:
         names = ", ".join(f"'{name}'" for name in package_result["invalid"])

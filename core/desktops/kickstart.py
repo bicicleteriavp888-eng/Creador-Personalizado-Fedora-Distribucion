@@ -119,7 +119,10 @@ class DesktopKickstartGenerator:
         """Resuelve y valida los paquetes del entorno sin generar el Kickstart."""
         return resolve_desktop_packages(
             self.config.get("desktop_environment") or "gnome",
-            extra_packages=self.config.get("extra_packages", ""),
+            extra_packages=" ".join([
+                str(self.config.get("extra_packages", "") or ""),
+                *[str(name) for name in self.config.get("local_rpm_packages", [])],
+            ]).strip(),
             extra_groups=self.config.get("extra_groups", ()),
             enable_firewall=self.enable_firewall,
             enable_ssh=self.enable_ssh,
@@ -142,6 +145,11 @@ class DesktopKickstartGenerator:
             release=self.release,
             arch=self.arch,
         ).lines()
+        local_repo = self.config.get("local_rpm_repo")
+        if local_repo:
+            # Ruta generada por el constructor y validada antes de livecd-creator.
+            local_repo = os.path.abspath(os.path.expanduser(str(local_repo)))
+            repo_lines += f'\nrepo --name=creador-local-rpms --baseurl="file://{local_repo}"'
 
         post_sections = [
             self._user_section(password_hash),

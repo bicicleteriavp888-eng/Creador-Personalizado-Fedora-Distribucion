@@ -10,19 +10,20 @@ import html
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QHeaderView,
-    QTableWidget,
-    QTableWidgetItem,
-    QSplitter,
-    QGroupBox,
     QComboBox,
+    QFileDialog,
+    QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -78,6 +79,27 @@ class DnfWorker(QThread):
 
 
 class CustomDistroTabMixin:
+
+    def adapt_software_manager_layout(self, available_width=None):
+        """Adapta el catálogo/cesta al ancho disponible de la ventana."""
+        splitter = getattr(self, "software_manager_splitter", None)
+        if splitter is None:
+            return
+        if available_width is None:
+            available_width = self.width()
+        target = (
+            Qt.Orientation.Horizontal
+            if int(available_width) >= 1440
+            else Qt.Orientation.Vertical
+        )
+        if splitter.orientation() != target:
+            splitter.setOrientation(target)
+            if target == Qt.Orientation.Horizontal:
+                splitter.setSizes([max(420, available_width * 0.58),
+                                   max(320, available_width * 0.42)])
+            else:
+                splitter.setSizes([560, 340])
+
     def init_custom_distro(self):
         """Construye el gestor visual de software estilo Synaptic."""
         page = QWidget()
@@ -94,11 +116,29 @@ class CustomDistroTabMixin:
         )
         layout.addWidget(self.lbl_manager_status)
 
+        def _card(title, subtitle=""):
+            frame = QFrame()
+            frame.setObjectName("settingRowCard")
+            card_layout = QVBoxLayout(frame)
+            card_layout.setContentsMargins(16, 14, 16, 14)
+            card_layout.setSpacing(10)
+            t = QLabel(title)
+            t.setObjectName("settingTitle")
+            card_layout.addWidget(t)
+            if subtitle:
+                d = QLabel(subtitle)
+                d.setObjectName("settingDescription")
+                d.setWordWrap(True)
+                card_layout.addWidget(d)
+            return frame, card_layout
+
         # Objetivo del proyecto y perfiles sugeridos. Este combo es propio del
         # gestor: el selector del paso 1 permanece en su formulario y ambos se
         # sincronizan por estado, sin reparentar widgets entre páginas.
-        profile = QGroupBox("Perfil de distribución")
-        profile_layout = QVBoxLayout(profile)
+        profile, profile_layout = _card(
+            "Perfil de distribución",
+            "Define el objetivo del proyecto y carga paquetes sugeridos.",
+        )
         profile_row = QHBoxLayout()
         self.combo_manager_project_type = QComboBox()
         prepare_combo(self.combo_manager_project_type, 20)
@@ -129,10 +169,10 @@ class CustomDistroTabMixin:
         self._update_project_description()
 
         # Barra de búsqueda y filtros del catálogo.
-        search_box = QWidget()
-        search_layout = QVBoxLayout(search_box)
-        search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.setSpacing(6)
+        search_box, search_layout = _card(
+            "Catálogo de software Fedora",
+            "Buscá paquetes por nombre o descripción y filtrá por repositorio.",
+        )
         search_row = QHBoxLayout()
         self.custom_pkg_search = QLineEdit()
         self.custom_pkg_search.setPlaceholderText("Buscar por nombre o descripción: firefox, gimp, servidor web…")
@@ -172,9 +212,11 @@ class CustomDistroTabMixin:
         layout.addWidget(search_box)
 
         # Catálogo y cesta de cambios pendientes.
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        available_box = QGroupBox("Paquetes disponibles")
-        available_layout = QVBoxLayout(available_box)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.setObjectName("softwareManagerSplitter")
+        self.software_manager_splitter = splitter
+        splitter.setChildrenCollapsible(True)
+        available_box, available_layout = _card("Paquetes disponibles")
         self.table_fedora_available = QTableWidget(0, 6)
         self.table_fedora_available.setObjectName("managerTable")
         self.table_fedora_available.setHorizontalHeaderLabels(
@@ -197,15 +239,18 @@ class CustomDistroTabMixin:
         header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        self.table_fedora_available.setMinimumHeight(220)
+        self.table_fedora_available.setMinimumHeight(120)
+        self.table_fedora_available.setMinimumWidth(0)
+        self.table_fedora_available.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         available_layout.addWidget(self.table_fedora_available, 1)
         self.lbl_package_detail = QLabel("Seleccioná un paquete para consultar sus datos.")
         self.lbl_package_detail.setWordWrap(True)
         available_layout.addWidget(self.lbl_package_detail)
+        available_box.setMinimumWidth(0)
+        available_box.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         splitter.addWidget(available_box)
 
-        pending_box = QGroupBox("Cambios pendientes")
-        pending_layout = QVBoxLayout(pending_box)
+        pending_box, pending_layout = _card("Cambios pendientes")
         self.table_fedora_pending = QTableWidget(0, 2)
         self.table_fedora_pending.setObjectName("pendingTable")
         self.table_fedora_pending.setHorizontalHeaderLabels(["Acción", "Paquete / grupo"])
@@ -218,7 +263,9 @@ class CustomDistroTabMixin:
         self.table_fedora_pending.horizontalHeader().setMinimumSectionSize(52)
         self.table_fedora_pending.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table_fedora_pending.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table_fedora_pending.setMinimumHeight(220)
+        self.table_fedora_pending.setMinimumHeight(110)
+        self.table_fedora_pending.setMinimumWidth(0)
+        self.table_fedora_pending.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         pending_layout.addWidget(self.table_fedora_pending, 1)
         self.lbl_custom_pkg_count = QLabel("0 paquetes · 0 grupos seleccionados")
         pending_layout.addWidget(self.lbl_custom_pkg_count)
@@ -230,10 +277,13 @@ class CustomDistroTabMixin:
         self.lbl_pending_scope.setObjectName("scopeNote")
         self.lbl_pending_scope.setWordWrap(True)
         pending_layout.addWidget(self.lbl_pending_scope)
+        pending_box.setMinimumWidth(0)
+        pending_box.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
         splitter.addWidget(pending_box)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
-        splitter.setChildrenCollapsible(False)
+        splitter.setChildrenCollapsible(True)
+        splitter.setSizes([620, 360])
         layout.addWidget(splitter, 1)
 
         action_row = FlowLayout(h_spacing=10, v_spacing=8)
@@ -252,8 +302,7 @@ class CustomDistroTabMixin:
 
         # Grupos Comps y repositorios en panel secundario, sin competir con el catálogo.
         lower = QHBoxLayout()
-        groups_box = QGroupBox("Grupos Comps")
-        groups_layout = QVBoxLayout(groups_box)
+        groups_box, groups_layout = _card("Grupos Comps")
         self.combo_dnf_group = QComboBox()
         prepare_combo(self.combo_dnf_group, 22)
         self.combo_dnf_group.setEnabled(False)
@@ -277,8 +326,7 @@ class CustomDistroTabMixin:
         groups_layout.addLayout(group_actions)
         lower.addWidget(groups_box, 3)
 
-        repos_box = QGroupBox("Repositorios")
-        repos_layout = QVBoxLayout(repos_box)
+        repos_box, repos_layout = _card("Repositorios")
         self.btn_repos_query = QPushButton("Actualizar repositorios")
         self.btn_repos_query.clicked.connect(self.load_enabled_repositories)
         repos_layout.addWidget(self.btn_repos_query)
@@ -286,6 +334,25 @@ class CustomDistroTabMixin:
         self.lbl_repos_status.setWordWrap(True)
         repos_layout.addWidget(self.lbl_repos_status)
         lower.addWidget(repos_box, 2)
+
+        rpm_box, rpm_layout = _card("RPM locales · software adicional")
+        self.list_local_rpms = QListWidget()
+        self.list_local_rpms.setMinimumHeight(74)
+        self.list_local_rpms.setToolTip(
+            "Los RPM se inspeccionan y verifican antes de compilar. En Desktop "
+            "se instalan como paquetes del sistema; en Kiosco se agregan al "
+            "sistema sin reemplazar el selector de aplicación de inicio."
+        )
+        rpm_layout.addWidget(self.list_local_rpms)
+        rpm_actions = QHBoxLayout()
+        self.btn_add_local_rpm = QPushButton("Agregar RPM local…")
+        self.btn_add_local_rpm.clicked.connect(self._add_local_rpms)
+        self.btn_remove_local_rpm = QPushButton("Quitar seleccionado")
+        self.btn_remove_local_rpm.clicked.connect(self._remove_local_rpm)
+        rpm_actions.addWidget(self.btn_add_local_rpm)
+        rpm_actions.addWidget(self.btn_remove_local_rpm)
+        rpm_layout.addLayout(rpm_actions)
+        lower.addWidget(rpm_box, 3)
         layout.addLayout(lower)
         layout.addWidget(profile)
 
@@ -314,6 +381,7 @@ class CustomDistroTabMixin:
         self._custom_pkg_worker = None
         self._custom_pkg_names = set()
         self._custom_groups = set()
+        self._custom_local_rpm_paths = []
         self._custom_repositories = []
         self._custom_group_names = {}
         self._package_catalog = []
@@ -725,6 +793,69 @@ class CustomDistroTabMixin:
             body.extend(f"  • {name}" for name in packages)
             body.append("")
         QMessageBox.information(self, "Contenido del grupo Comps", "\n".join(body))
+
+    # -- RPM locales ---------------------------------------------------------
+
+    def _add_local_rpms(self):
+        from core.software.local_rpm import LocalRPMError, inspect_local_rpm
+
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Seleccionar paquetes RPM", "", "Paquetes RPM (*.rpm)"
+        )
+        if not paths:
+            return
+        allow_unsigned = bool(
+            getattr(self, "check_allow_unsigned_rpms", None)
+            and self.check_allow_unsigned_rpms.isChecked()
+        )
+        added, errors = [], []
+        for path in paths:
+            if path in self._custom_local_rpm_paths:
+                continue
+            try:
+                info = inspect_local_rpm(path, allow_unsigned=allow_unsigned)
+                self._custom_local_rpm_paths.append(info["path"])
+                trust = "firma confiable" if info["trusted"] else "sin firma · digest OK"
+                self.list_local_rpms.addItem(
+                    f"{info['name']} {info['version']}-{info['release']} · {info['arch']} · {trust}"
+                )
+                added.append(info["name"])
+            except LocalRPMError as exc:
+                errors.append(f"{path}: {exc}")
+        self._set_manager_status(
+            "RPM agregados y verificados: " + (", ".join(added) if added else "ninguno")
+        )
+        if errors:
+            QMessageBox.warning(self, "RPM rechazados", "\n\n".join(errors))
+
+    def _remove_local_rpm(self):
+        row = self.list_local_rpms.currentRow()
+        if row < 0:
+            return
+        self.list_local_rpms.takeItem(row)
+        if 0 <= row < len(self._custom_local_rpm_paths):
+            self._custom_local_rpm_paths.pop(row)
+
+    def _restore_local_rpm_selection(self, paths):
+        """Restaura rutas guardadas y vuelve a inspeccionarlas para la GUI."""
+        from core.software.local_rpm import LocalRPMError, inspect_local_rpm
+
+        self._custom_local_rpm_paths = []
+        self.list_local_rpms.clear()
+        allow_unsigned = bool(
+            getattr(self, "check_allow_unsigned_rpms", None)
+            and self.check_allow_unsigned_rpms.isChecked()
+        )
+        for raw_path in paths or []:
+            path = str(raw_path)
+            self._custom_local_rpm_paths.append(path)
+            try:
+                info = inspect_local_rpm(path, allow_unsigned=allow_unsigned)
+                trust = "firma confiable" if info["trusted"] else "sin firma · digest OK"
+                label = f"{info['name']} {info['version']}-{info['release']} · {info['arch']} · {trust}"
+            except (LocalRPMError, OSError):
+                label = f"{path} · pendiente de verificación"
+            self.list_local_rpms.addItem(label)
 
     # -- Selección -----------------------------------------------------------
 

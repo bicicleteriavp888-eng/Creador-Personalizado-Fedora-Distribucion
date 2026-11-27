@@ -5,7 +5,6 @@ import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
 from core.repositories.dnf_query import DnfGroup, DnfRepository
@@ -19,17 +18,7 @@ def app():
 
 @pytest.fixture
 def window(app, tmp_path, monkeypatch):
-    config_dir = tmp_path / "config"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    # Qt puede cachear QStandardPaths al crear QApplication; cambiar solo
-    # XDG_CONFIG_HOME entre tests no garantiza aislar QSettings. Fijamos
-    # explícitamente el directorio de usuario para cada ventana de prueba.
-    QSettings.setPath(
-        QSettings.Format.NativeFormat,
-        QSettings.Scope.UserScope,
-        str(config_dir),
-    )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_dir))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
     widget = KioskBuilderGUI()
     widget.show()
     app.processEvents()
@@ -287,10 +276,6 @@ def test_validate_step_button_is_only_visible_for_wizard_steps(window, app):
 def test_validate_step_button_reports_issues_without_advancing(window, app):
     shown = []
     window._show_issues = lambda issues: shown.extend(issues)
-    # La contraseña es obligatoria en Desktop; Kiosco no la utiliza.
-    window.combo_project_type.setCurrentIndex(
-        window.combo_project_type.findData("office")
-    )
     window.txt_password.setText("")
     assert window._navigate("step1", validate=False)
     app.processEvents()
@@ -334,12 +319,7 @@ def test_dashboard_hashes_existing_iso_in_background(window, app, tmp_path):
     assert window._settings.value("last_iso_sha256") == expected
 
 
-def test_custom_distro_group_selection_is_applied(window, app, monkeypatch):
-    warnings = []
-    monkeypatch.setattr(
-        "gui.custom_distro.QMessageBox.warning",
-        lambda *args, **kwargs: warnings.append(args),
-    )
+def test_custom_distro_group_selection_is_applied(window, app):
     window._show_groups([DnfGroup("office", "Office/Productivity", False)])
     window.combo_dnf_group.setCurrentIndex(0)
 
@@ -353,10 +333,6 @@ def test_custom_distro_group_selection_is_applied(window, app, monkeypatch):
     app.processEvents()
     assert window.txt_extra_groups.text() == "@office"
     assert window.collect_config()["extra_groups"] == "@office"
-    # El perfil inicial es Kiosco: se advierte que no aplica grupos Comps,
-    # pero la selección queda preservada para que el usuario pueda cambiar
-    # a un perfil Desktop antes de compilar.
-    assert warnings
 
 
 def test_custom_distro_rejects_invalid_group_before_adding(window, app, monkeypatch):

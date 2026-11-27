@@ -22,6 +22,7 @@ class BuildConfig:
     hardware_modules: list[str] = field(default_factory=list)
     extra_packages: str = ""
     extra_groups: str = ""
+    local_rpm_paths: list[str] = field(default_factory=list)
     output_dir: str = "~/ISOs"
     cache_dir: str = ""
     cache_enabled: bool = True

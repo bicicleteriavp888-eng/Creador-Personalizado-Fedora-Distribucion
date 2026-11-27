@@ -23,7 +23,7 @@ from core.privileges import detect_privilege_prefix
 from core.processes import runner as process_runner
 from core.history import BuildHistory
 from core.security.allowlist import validate_packages_list
-from core.security.rpm_verifier import verify_rpm_signature
+from core.software.local_rpm import inspect_local_rpm, inspect_local_rpms
 from core.kickstart.validator import validate_kickstart_file
 
 # --- Constantes de la receta -------------------------------------------------
@@ -283,7 +283,7 @@ class KioskISOBuilder(QObject):
             self.multi_app
             and self.app2_mode == "local"
             and self.app2_path.lower().endswith(".rpm")
-        )
+        ) or bool(self.config.get("local_rpm_paths"))
 
     def _preflight(self):
         missing = [
@@ -351,18 +351,23 @@ class KioskISOBuilder(QObject):
     def _repo_lines(self):
         """Lineas ``repo`` del Kickstart (mirrorlist oficial o mirror fijo)."""
         if self.mirror:
-            return (
+            lines = (
                 f"repo --name=fedora --baseurl={self.mirror}/releases/"
                 f"{self.release}/Everything/{FEDORA_ARCH}/os/\n"
                 f"repo --name=updates --baseurl={self.mirror}/updates/"
                 f"{self.release}/Everything/{FEDORA_ARCH}/"
             )
-        return (
-            f"repo --name=fedora --mirrorlist={self.mirrorlist}"
-            f"?repo=fedora-{self.release}&arch={FEDORA_ARCH}\n"
-            f"repo --name=updates --mirrorlist={self.mirrorlist}"
-            f"?repo=updates-released-f{self.release}&arch={FEDORA_ARCH}"
-        )
+        else:
+            lines = (
+                f"repo --name=fedora --mirrorlist={self.mirrorlist}"
+                f"?repo=fedora-{self.release}&arch={FEDORA_ARCH}\n"
+                f"repo --name=updates --mirrorlist={self.mirrorlist}"
+                f"?repo=updates-released-f{self.release}&arch={FEDORA_ARCH}"
+            )
+        local_repo = getattr(self, "local_rpm_repo", "")
+        if local_repo:
+            lines += f'\nrepo --name=creador-local-rpms --baseurl="file://{local_repo}"'
+        return lines
 
     def _check_repo(self):
         if self.mirror:
@@ -799,27 +804,22 @@ class KioskISOBuilder(QObject):
                 "Falta el comando 'rpm' en el host para inspeccionar el paquete."
             )
 
-        signature = verify_rpm_signature(source)
-        allow_unsigned = bool(self.config.get("allow_unsigned_rpms", False))
-        if not signature.get("verified"):
-            if signature.get("unsigned") and allow_unsigned:
-                self.log_signal.emit(
-                    "⚠ ADVERTENCIA: RPM sin firma aceptado por decisión explícita "
-                    "del usuario. Los digests del paquete fueron verificados."
-                )
-            else:
-                reason = signature.get("error", "")
-                if signature.get("unsigned"):
-                    reason += " Activa 'Permitir RPM sin firma' solo si confías en el archivo y asumes el riesgo."
-                raise RuntimeError(
-                    "Se rechazó el RPM local. Las firmas inválidas, claves desconocidas "
-                    "y paquetes con digests incorrectos nunca se aceptan. " + reason
-                )
-
-        package_name = self._must(
-            self._run(["rpm", "-qp", "--qf", "%{NAME}", source]),
-            "leer el nombre del RPM",
-        ).stdout.strip()
+        try:
+            rpm_info = inspect_local_rpm(
+                source,
+                allow_unsigned=bool(self.config.get("allow_unsigned_rpms", False)),
+            )
+        except ValueError as exc:
+            raise RuntimeError(
+                "Se rechazó el RPM local. Las firmas inválidas, claves desconocidas "
+                "y digests incorrectos o no verificables nunca se aceptan. " + str(exc)
+            ) from exc
+        if rpm_info["unsigned"]:
+            self.log_signal.emit(
+                "⚠ ADVERTENCIA: RPM sin firma aceptado por decisión explícita "
+                "del usuario. Los digests del paquete fueron verificados."
+            )
+        package_name = rpm_info["name"]
 
         listing = self._must(
             self._run(
@@ -988,6 +988,21 @@ class KioskISOBuilder(QObject):
                 "Se creara una ISO hibrida con arranque EFI incluido."
             )
 
+        self._local_rpm_metadata = inspect_local_rpms(
+            self.config.get("local_rpm_paths", []),
+            allow_unsigned=bool(self.config.get("allow_unsigned_rpms", False)),
+        )
+        if self._local_rpm_metadata:
+            if shutil.which("createrepo_c") is None:
+                raise RuntimeError("Falta createrepo_c para publicar los RPM locales seleccionados.")
+            self.local_rpm_repo = os.path.join(self.work_dir, "kiosk-local-rpms")
+            shutil.rmtree(self.local_rpm_repo, ignore_errors=True)
+            os.makedirs(self.local_rpm_repo, exist_ok=True)
+            for item in self._local_rpm_metadata:
+                shutil.copy2(item["path"], os.path.join(self.local_rpm_repo, os.path.basename(item["path"])))
+            self._must(self._run(["createrepo_c", "--quiet", self.local_rpm_repo]),
+                       "crear el repositorio de RPM locales del Kiosco")
+            self.log_signal.emit("📦 RPM locales del Kiosco: " + ", ".join(item["name"] for item in self._local_rpm_metadata))
         self._app = self._resolve_app()
         app2 = self._resolve_app2() if self.multi_app else None
         if app2 is not None:
@@ -1184,12 +1199,12 @@ part / --size 20480 --fstype ext4
                 "grub2-tools",
             ]
 
-        extra = [
-            pkg
-            for pkg in re.split(r"[\s,]+", self.config.get("extra_packages", ""))
-            if pkg
-        ]
-        package_policy = validate_packages_list(self.config.get("extra_packages", ""))
+        extra_packages_raw = " ".join([
+            str(self.config.get("extra_packages", "") or ""),
+            *[item["name"] for item in getattr(self, "_local_rpm_metadata", [])],
+        ]).strip()
+        extra = [pkg for pkg in re.split(r"[\s,]+", extra_packages_raw) if pkg]
+        package_policy = validate_packages_list(extra_packages_raw)
         invalid = package_policy["invalid"]
         blocked = package_policy["blocked"]
         if invalid:

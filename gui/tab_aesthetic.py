@@ -4,9 +4,15 @@ from core.builder import MAX_PLYMOUTH_BYTES
 from gui.components import configure_image_preview
 from gui.images import ImageField
 from gui.layouts import add_page
+from gui.ui_components import SettingRowCard
 from PySide6.QtWidgets import (
-    QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QPushButton,
-    QVBoxLayout, QWidget,
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
 HELP = """
@@ -26,8 +32,23 @@ class AestheticTabMixin:
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        group_splash = QGroupBox("Imagen de inicio · Plymouth")
-        splash_layout = QVBoxLayout(group_splash)
+        # --- Imagen de inicio (tarjeta visual) ---
+        splash_card = QFrame()
+        splash_card.setObjectName("settingRowCard")
+        splash_layout = QVBoxLayout(splash_card)
+        splash_layout.setContentsMargins(16, 14, 16, 14)
+        splash_layout.setSpacing(10)
+
+        splash_header = QLabel("Imagen de inicio · Plymouth")
+        splash_header.setObjectName("settingTitle")
+        splash_layout.addWidget(splash_header)
+        splash_desc = QLabel(
+            "Se muestra en el arranque y durante la carga del sistema. Si no elegís una imagen, se usa el tema predeterminado."
+        )
+        splash_desc.setObjectName("settingDescription")
+        splash_desc.setWordWrap(True)
+        splash_layout.addWidget(splash_desc)
+
         self.plymouth_preview = QLabel("Sin imagen · tema del sistema")
         self.plymouth_preview.setObjectName("imagePreview")
         configure_image_preview(self.plymouth_preview)
@@ -50,6 +71,7 @@ class AestheticTabMixin:
         self.btn_plymouth.clicked.connect(self.plymouth_field.select)
         self.btn_plymouth_clear.clicked.connect(self.plymouth_field.clear)
         actions = QHBoxLayout()
+        actions.setSpacing(8)
         actions.addWidget(self.btn_plymouth)
         actions.addWidget(self.btn_plymouth_clear)
         actions.addStretch(1)
@@ -59,30 +81,28 @@ class AestheticTabMixin:
             "PNG, JPG, WebP o BMP. Se convierte y optimiza a PNG (máximo 4 MiB). "
             "Para el menú BIOS/Legacy se recomienda una imagen de 640 × 480."
         )
-        hint.setObjectName("inlineHint")
+        hint.setObjectName("settingDescription")
         hint.setWordWrap(True)
         splash_layout.addWidget(hint)
+        layout.addWidget(splash_card)
 
-        group_display = QGroupBox("Resolución de pantalla")
-        display = QFormLayout(group_display)
+        # --- Resolución ---
         self.combo_res = QComboBox()
         self.combo_res.addItem("Autodetectar (recomendado)", "auto")
         for resolution in ("1360x768", "1920x1080", "1280x720"):
             self.combo_res.addItem(resolution, resolution)
-        display.addRow("Resolución:", self.combo_res)
-        resolution_hint = QLabel(
-            "Se configura mediante wlr-randr dentro de Cage o Sway. Si el modo "
-            "no está disponible, se utiliza la resolución preferida por el monitor."
+        self.card_resolution = SettingRowCard(
+            "Resolución de pantalla",
+            "Se aplica con wlr-randr en Cage/Sway. Si el modo no está disponible, se usa la resolución preferida por el monitor.",
+            "🖥",
+            self.combo_res,
         )
-        resolution_hint.setObjectName("inlineHint")
-        resolution_hint.setWordWrap(True)
-        display.addRow("", resolution_hint)
+        layout.addWidget(self.card_resolution)
 
-        layout.addWidget(group_splash)
-        layout.addWidget(group_display)
-        self.group_kiosk_display = group_display
+        self.group_kiosk_display = self.card_resolution
         layout.addStretch(1)
-        self._register_advanced(self.combo_res, display)
+
+        self._register_advanced(self.card_resolution)
         add_page(
             self, "step2", tab, "Apariencia y personalización",
             "Personalizá la pantalla de inicio y el comportamiento de pantalla.",
