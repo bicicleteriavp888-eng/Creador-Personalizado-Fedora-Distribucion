@@ -102,7 +102,7 @@ b229d35cae84367d7d656a814102a90412b397fe57c47a12003baff5aeee301d  ./documentatio
 e508d40bb7b38f4c9282c4cbaaeffac007a2b8d763e8713a9988b1a6bc2b3255  ./documentation/rediseno-3.0/paso6-claro-1320x900.png
 34d870e01c0bf4fa19161c99a6074405111e03348d2cbcb20707782563e7829c  ./documentation/SEGUIMIENTO_ETAPAS_2.1.md
 52ab49e2faca38804b3e0b7a3f8c202f355efaaa585c9463f5b4836bc52b5706  ./documentation/SELECCION_SOFTWARE_2.4.md
-129c00204e537763b94730b6d2fae91ca515d5efa234d239c5d43f1e965a6e08  ./.github/workflows/ci.yml
+b69fe1b0ab6ff75ad388094a472fb9655c7cef1a2a2792decb54f68a7c5e485f  ./.github/workflows/ci.yml
 dfe1066b3b9b74e637687cd340027d5a73384e9058e1b0c5cd37e608b4437c06  ./.gitignore
 c36a930abbfc6277cef3d5918c2523125cbefb0187bba8b364951c0ffb91090d  ./gui/components.py
 3be24dc67a92202ec031d92898bd28f68fb56db774bdea6b9cc53d12082ab0a3  ./gui/custom_distro.py
